@@ -1,0 +1,12 @@
+{
+  "name": "coding-with-claude",
+  "owner": { "name": "SimAnt2020" },
+  "description": "Mods for Claude Code and the Claude desktop app",
+  "plugins": [
+    {
+      "name": "usage-pane",
+      "source": "./usage-pane",
+      "description": "Docked pane showing session and weekly plan usage, tokens by model, and estimated tokens left"
+    }
+  ]
+}
