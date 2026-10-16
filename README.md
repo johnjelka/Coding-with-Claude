@@ -16,18 +16,18 @@ Figures refresh after each Claude reply, and every open pane picks up other sess
 
 ## Install
 
-In the desktop app: click **+** next to the prompt box, then **Plugins**, **Add marketplace** with `SimAnt2020/Coding-with-Claude`, then **Add plugin**.
+In the desktop app: click **+** next to the prompt box, then **Plugins**, **Add marketplace** with `johnjelka/Coding-with-Claude`, then **Add plugin**.
 
 At the prompt of a terminal session:
 
 ```
-/plugin install usage-pane --marketplace SimAnt2020/Coding-with-Claude
+/plugin install usage-pane --marketplace johnjelka/Coding-with-Claude
 ```
 
 From a shell:
 
 ```
-claude plugin install usage-pane --marketplace SimAnt2020/Coding-with-Claude
+claude plugin install usage-pane --marketplace johnjelka/Coding-with-Claude
 ```
 
 Answer `y` to add the marketplace, then pick a scope.

@@ -1,6 +1,6 @@
 {
   "name": "coding-with-claude",
-  "owner": { "name": "SimAnt2020" },
+  "owner": { "name": "johnjelka" },
   "description": "Mods for Claude Code and the Claude desktop app",
   "plugins": [
     {
