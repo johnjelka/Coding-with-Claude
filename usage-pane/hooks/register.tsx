@@ -11,8 +11,8 @@ const LATEST = 'latest'
 const WINDOWS = 'windows'
 // Store key carrying a session's running total over a /clear, which restarts the module.
 const CARRY = 'carry'
-// A carried total older than this is ignored, so a stale one is never picked up.
-const CARRY_MS = 120_000
+// A carried total older than this is ignored, so a session opened later never inherits it.
+const CARRY_MS = 15_000
 // How often a pane pulls other sessions' readings and refreshes its countdowns.
 const TICK_MS = 30_000
 // Percentage points a window must climb past its base before a tokens-left estimate shows.
@@ -129,6 +129,17 @@ export function tokensLeft(w: Window | undefined, pct: number): number | null {
 
 const LABELS: Record<string, string> = { five_hour: 'Session (5h)', seven_day: 'Weekly' }
 
+type Carry = { at: number; cwd?: string; running: Record<string, Tokens> }
+
+// Take a running total carried over from a session that just ended in the same folder, if any.
+async function takeCarry($: EngineInterface, cwd: string | undefined): Promise<Record<string, Tokens> | null> {
+  const carry = (await $.store.get(CARRY)) as Carry | undefined
+  if (!carry) return null
+  const fresh = (await $.clock.now()) - carry.at < CARRY_MS && carry.cwd === cwd
+  await $.store.delete(CARRY)
+  return fresh ? carry.running : null
+}
+
 // Pull the newest shared reading and window tallies into this session's state.
 async function pull($: EngineInterface) {
   const shared = (await $.store.get(LATEST)) as Reading | undefined
@@ -140,18 +151,24 @@ async function pull($: EngineInterface) {
 }
 
 export const register: Register = on => {
-  // Running total for drawing; /clear wipes state and module memory, so it rides over in the store.
+  // Running total for drawing; the desktop app's /clear ends the session (reason 'other') and starts
+  // a new one with fresh state and module memory, so the total rides over in the store.
   let running: Record<string, Tokens> = {}
+  let cwd: string | undefined
 
   on('session.end', async ($, e, next) => {
-    if (e.reason === 'clear') await $.store.set(CARRY, { at: await $.clock.now(), running })
+    const carry: Carry = { at: await $.clock.now(), cwd, running }
+    await $.store.set(CARRY, carry)
 
     return next(e)
   })
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'usage-pane', description: 'Open the usage pane' })
-    running = await read($, tokens)
+    cwd = e.cwd
+    running = (await takeCarry($, cwd)) ?? (await read($, tokens))
+    const total = running
+    await update($, tokens, () => total)
     await pull($)
     $.clock.every(TICK_MS, () => void pull($))
     void $.ui.open({ id: PANE, title: TITLE })
@@ -190,12 +207,10 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // After /clear the new session's state starts empty: restore the running total and shared figures.
+  // The terminal's /clear keeps the process and fires no session.start: restore the total here instead.
   on('classic.SessionStart', async ($, e, next) => {
     if (e.source === 'clear') {
-      const carry = (await $.store.get(CARRY)) as { at: number; running: Record<string, Tokens> } | undefined
-      if (carry && (await $.clock.now()) - carry.at < CARRY_MS) running = carry.running
-      await $.store.delete(CARRY)
+      running = (await takeCarry($, cwd)) ?? running
       const total = running
       await update($, tokens, () => total)
       await update($, current, () => ({}))
