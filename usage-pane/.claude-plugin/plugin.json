@@ -1,6 +1,6 @@
 {
   "name": "usage-pane",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "Docked pane showing session and weekly plan usage, tokens by model, and estimated tokens left",
   "author": { "name": "johnjelka" },
   "license": "Unlicense",

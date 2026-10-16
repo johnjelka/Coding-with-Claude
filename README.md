@@ -7,7 +7,7 @@ Mods for Claude Code and the Claude desktop app.
 A docked **Usage** pane that opens with every session:
 
 - **Session (5h)** and **Weekly** plan limits: percent used, a bar, time to reset, and an estimate of tokens left.
-- **This session**: total tokens (input, output, cache read, cache write) and the split by model.
+- **Running total** of the session's tokens and **Current (since /clear)**, each split into input, output, cache read and cache write, plus the split by model. The two match until the first `/clear`.
 - **Limit points by model (est.)**: each model's estimated share of the session and weekly limits.
 
 Figures refresh after each Claude reply, and every open pane picks up other sessions' readings within 30 seconds. Plan limits only report a percentage, so tokens left and per-model shares are estimates: they count tokens from all sessions since the mod first saw each limit window, leave out cache reads, and do not see claude.ai usage. The mod makes no model calls and costs no tokens.

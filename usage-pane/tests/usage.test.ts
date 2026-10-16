@@ -1,6 +1,19 @@
 import { test, expect } from 'claude-code/testing'
 
-import { bar, fmt, modelName, newer, span, tally, tokensLeft } from '../hooks/register'
+import { addTokens, bar, fmt, modelName, newer, span, sumTokens, tally, tokensLeft } from '../hooks/register'
+
+test('addTokens and sumTokens tally per model', () => {
+  const t = { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 }
+  const all = addTokens(addTokens(addTokens({}, 'a', t), 'a', t), 'b', t)
+  expect(all['a']).toEqual({ input: 2, output: 4, cacheRead: 6, cacheWrite: 8 })
+  expect(sumTokens(all)).toEqual({ input: 3, output: 6, cacheRead: 9, cacheWrite: 12 })
+  expect(sumTokens({})).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
+})
+
+test('a /clear runs the clear hook without failing', async ($, on) => {
+  on('classic.SessionStart', () => ({}))
+  await $.classic.SessionStart({ source: 'clear' } as never)
+})
 
 test('fmt and modelName read well', () => {
   expect(fmt(950)).toBe('950')

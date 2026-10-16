@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
 import type { Limit, Reading, Tokens, Window } from '../types'
 
@@ -17,6 +17,8 @@ const MIN_PTS = 2
 const reading = atom({ plugin: 'usage-pane', key: 'reading' } as const, null as Reading | null)
 const now = atom({ plugin: 'usage-pane', key: 'now' } as const, 0)
 const tokens = atom({ plugin: 'usage-pane', key: 'tokens' } as const, {} as Record<string, Tokens>)
+// Tokens since the last /clear; equal to `tokens` until the first clear.
+const current = atom({ plugin: 'usage-pane', key: 'current' } as const, {} as Record<string, Tokens>)
 const windows = atom({ plugin: 'usage-pane', key: 'windows' } as const, {} as Record<string, Window>)
 
 // Pick the newer of two readings; null loses.
@@ -59,6 +61,37 @@ export function modelName(id: string): string {
   return nums ? `${name} ${nums}` : name || id
 }
 
+const ZERO: Tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+
+// Add one turn's tokens to a per-model tally.
+export function addTokens(all: Record<string, Tokens>, model: string, t: Tokens): Record<string, Tokens> {
+  const was = all[model] ?? ZERO
+  return {
+    ...all,
+    [model]: {
+      input: was.input + t.input,
+      output: was.output + t.output,
+      cacheRead: was.cacheRead + t.cacheRead,
+      cacheWrite: was.cacheWrite + t.cacheWrite,
+    },
+  }
+}
+
+// Sum a per-model tally into one set of counts.
+export function sumTokens(all: Record<string, Tokens>): Tokens {
+  return Object.values(all).reduce(
+    (a, v) => ({
+      input: a.input + v.input,
+      output: a.output + v.output,
+      cacheRead: a.cacheRead + v.cacheRead,
+      cacheWrite: a.cacheWrite + v.cacheWrite,
+    }),
+    ZERO,
+  )
+}
+
+const whole = (t: Tokens) => t.input + t.output + t.cacheRead + t.cacheWrite
+
 // Tokens that count toward the estimates; cache reads are left out as they weigh far less.
 export function counted(t: Tokens): number {
   return t.input + t.output + t.cacheWrite
@@ -92,19 +125,25 @@ export function tokensLeft(w: Window | undefined, pct: number): number | null {
 
 const LABELS: Record<string, string> = { five_hour: 'Session (5h)', seven_day: 'Weekly' }
 
+// Pull the newest shared reading and window tallies into this session's state.
+async function pull($: EngineInterface) {
+  const shared = (await $.store.get(LATEST)) as Reading | undefined
+  const ws = (await $.store.get(WINDOWS)) as Record<string, Window> | undefined
+  const at = await $.clock.now()
+  await update($, reading, mine => newer(mine, shared ?? null))
+  if (ws) await update($, windows, () => ws)
+  await update($, now, () => at)
+}
+
 export const register: Register = on => {
+  // Running total kept in module memory: /clear moves the process to a new session id with fresh state.
+  let running: Record<string, Tokens> = {}
+
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'usage-pane', description: 'Open the usage pane' })
-    const pull = async () => {
-      const shared = (await $.store.get(LATEST)) as Reading | undefined
-      const ws = (await $.store.get(WINDOWS)) as Record<string, Window> | undefined
-      const at = await $.clock.now()
-      await update($, reading, mine => newer(mine, shared ?? null))
-      if (ws) await update($, windows, () => ws)
-      await update($, now, () => at)
-    }
-    await pull()
-    $.clock.every(TICK_MS, () => void pull())
+    running = await read($, tokens)
+    await pull($)
+    $.clock.every(TICK_MS, () => void pull($))
     void $.ui.open({ id: PANE, title: TITLE })
 
     return next(e)
@@ -125,18 +164,10 @@ export const register: Register = on => {
         cacheRead: u.cache_read_input_tokens,
         cacheWrite: u.cache_creation_input_tokens,
       }
-      await update($, tokens, all => {
-        const was = all[u.model] ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-        return {
-          ...all,
-          [u.model]: {
-            input: was.input + t.input,
-            output: was.output + t.output,
-            cacheRead: was.cacheRead + t.cacheRead,
-            cacheWrite: was.cacheWrite + t.cacheWrite,
-          },
-        }
-      })
+      running = addTokens(running, u.model, t)
+      const total = running
+      await update($, tokens, () => total)
+      await update($, current, all => addTokens(all, u.model, t))
       const r = newer(await read($, reading), ((await $.store.get(LATEST)) as Reading | undefined) ?? null)
       if (r) {
         const shared = ((await $.store.get(WINDOWS)) as Record<string, Window> | undefined) ?? {}
@@ -144,6 +175,18 @@ export const register: Register = on => {
         await $.store.set(WINDOWS, ws)
         await update($, windows, () => ws)
       }
+    }
+
+    return next(e)
+  })
+
+  // After /clear the new session's state starts empty: restore the running total and shared figures.
+  on('classic.SessionStart', async ($, e, next) => {
+    if (e.source === 'clear') {
+      const total = running
+      await update($, tokens, () => total)
+      await update($, current, () => ({}))
+      await pull($)
     }
 
     return next(e)
@@ -185,17 +228,13 @@ export const register: Register = on => {
       )
     }
 
+    const sinceClear = await read($, current)
     const models = Object.entries(mine)
-    const sum = models.reduce(
-      (a, [, v]) => ({
-        input: a.input + v.input,
-        output: a.output + v.output,
-        cacheRead: a.cacheRead + v.cacheRead,
-        cacheWrite: a.cacheWrite + v.cacheWrite,
-      }),
-      { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    )
-    const all = sum.input + sum.output + sum.cacheRead + sum.cacheWrite
+    const sum = sumTokens(mine)
+    const all = whole(sum)
+    const cur = sumTokens(sinceClear)
+    const split = (t: Tokens) =>
+      `in ${fmt(t.input)} · out ${fmt(t.output)} · cache read ${fmt(t.cacheRead)} · cache write ${fmt(t.cacheWrite)}`
 
     // Each model's estimated points of a window: its token share times the points moved since tracking began.
     const share = (kind: string, model: string) => {
@@ -216,11 +255,14 @@ export const register: Register = on => {
         {r && <Text dimColor>updated {span(t - r.at)} ago</Text>}
 
         <Box flexDirection="column" marginTop={1}>
-          <Text bold>This session  {fmt(all)} tokens</Text>
-          <Text dimColor>in {fmt(sum.input)} · out {fmt(sum.output)} · cache read {fmt(sum.cacheRead)} · cache write {fmt(sum.cacheWrite)}</Text>
+          <Text bold>Running total  {fmt(all)} tokens</Text>
+          <Text dimColor>{split(sum)}</Text>
+          <Text bold>Current (since /clear)  {fmt(whole(cur))} tokens</Text>
+          <Text dimColor>{split(cur)}</Text>
           {models.map(([id, v]) => {
-            const n = v.input + v.output + v.cacheRead + v.cacheWrite
-            return <Text>{modelName(id)}  {fmt(n)} ({all ? Math.round((n / all) * 100) : 0}%)</Text>
+            const n = whole(v)
+            const c = sinceClear[id] ? whole(sinceClear[id]) : 0
+            return <Text>{modelName(id)}  {fmt(n)} ({all ? Math.round((n / all) * 100) : 0}%) · current {fmt(c)}</Text>
           })}
         </Box>
 

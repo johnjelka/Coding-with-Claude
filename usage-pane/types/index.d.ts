@@ -12,6 +12,7 @@ declare module 'claude-code' {
       reading: Reading | null
       now: number
       tokens: Record<string, Tokens>
+      current: Record<string, Tokens>
       windows: Record<string, Window>
     }
   }
