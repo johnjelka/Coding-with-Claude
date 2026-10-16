@@ -129,6 +129,19 @@ export function tokensLeft(w: Window | undefined, pct: number): number | null {
 
 const LABELS: Record<string, string> = { five_hour: 'Session (5h)', seven_day: 'Weekly' }
 
+// One line of real usage for the model: context fill, plan limits, session running total.
+export function usageNote(
+  ctx: { tokens?: number; window: number; percent?: number },
+  r: Reading | null,
+  total: number,
+): string | null {
+  const parts: string[] = []
+  if (ctx.tokens !== undefined) parts.push(`context ${fmt(ctx.tokens)} of ${fmt(ctx.window)} (${ctx.percent ?? Math.round((ctx.tokens / ctx.window) * 100)}%)`)
+  for (const l of r?.limits ?? []) parts.push(`${LABELS[l.kind] ?? l.kind} limit ${l.percentUsed}%`)
+  if (total > 0) parts.push(`session running total ${fmt(total)} tokens`)
+  return parts.length ? `[usage-pane, measured] ${parts.join(' · ')}` : null
+}
+
 type Carry = { at: number; cwd?: string; running: Record<string, Tokens> }
 
 // Take a running total carried over from a session that just ended in the same folder, if any.
@@ -180,6 +193,15 @@ export const register: Register = on => {
     await $.ui.open({ id: PANE, title: TITLE })
 
     return { text: 'Usage pane opened.' }
+  })
+
+  // Tell the model the real figures with each prompt, as hidden context after it so the prompt cache holds.
+  on('prompt.submit', async ($, e, next) => {
+    const usage = await $.session.usage()
+    const r = await read($, reading)
+    const note = usageNote(usage.context, r, whole(sumTokens(running)))
+
+    return next(note ? { ...e, context: [...(e.context ?? []), note] } : e)
   })
 
   on('turn.complete', async ($, e, next) => {

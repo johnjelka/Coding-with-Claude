@@ -1,6 +1,14 @@
 import { test, expect } from 'claude-code/testing'
 
-import { addTokens, bar, fmt, modelName, newer, span, sumTokens, tally, tokensLeft } from '../hooks/register'
+import { addTokens, bar, fmt, modelName, newer, span, sumTokens, tally, tokensLeft, usageNote } from '../hooks/register'
+
+test('usageNote reports context, limits and running total', () => {
+  const r = { at: 1, limits: [{ kind: 'five_hour', percentUsed: 42 }, { kind: 'seven_day', percentUsed: 24 }] }
+  expect(usageNote({ tokens: 152_000, window: 1_000_000, percent: 15 }, r, 166_300)).toBe(
+    '[usage-pane, measured] context 152.0k of 1.00M (15%) · Session (5h) limit 42% · Weekly limit 24% · session running total 166.3k tokens',
+  )
+  expect(usageNote({ window: 1_000_000 }, null, 0)).toBe(null)
+})
 
 test('addTokens and sumTokens tally per model', () => {
   const t = { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 }
