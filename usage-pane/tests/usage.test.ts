@@ -10,9 +10,19 @@ test('addTokens and sumTokens tally per model', () => {
   expect(sumTokens({})).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
 })
 
-test('a /clear runs the clear hook without failing', async ($, on) => {
+test('a /clear picks the carried running total back up', async ($, on) => {
+  const t = { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 }
+  const saved: Record<string, unknown> = { carry: { at: 1_000, running: { m: t } } }
+  on('store.get', ($, e) => ({ value: saved[e.key] }) as never)
+  on('store.set', ($, e) => { saved[e.key] = e.value; return { value: undefined } as never })
+  on('store.delete', ($, e) => { delete saved[e.key]; return { value: undefined } as never })
+  on('clock.now', () => ({ value: 2_000 }) as never)
+  const writes: string[] = []
+  on('state.set', ($, e, next) => { writes.push(JSON.stringify(e)); return next(e) })
   on('classic.SessionStart', () => ({}))
   await $.classic.SessionStart({ source: 'clear' } as never)
+  expect(writes.some(w => w.includes('"tokens"') && w.includes('"cacheWrite":4'))).toBe(true)
+  expect(saved['carry']).toBe(undefined)
 })
 
 test('fmt and modelName read well', () => {

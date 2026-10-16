@@ -9,6 +9,10 @@ const TITLE = 'Usage'
 const LATEST = 'latest'
 // Store key holding every limit window's cross-session token tally.
 const WINDOWS = 'windows'
+// Store key carrying a session's running total over a /clear, which restarts the module.
+const CARRY = 'carry'
+// A carried total older than this is ignored, so a stale one is never picked up.
+const CARRY_MS = 120_000
 // How often a pane pulls other sessions' readings and refreshes its countdowns.
 const TICK_MS = 30_000
 // Percentage points a window must climb past its base before a tokens-left estimate shows.
@@ -136,8 +140,14 @@ async function pull($: EngineInterface) {
 }
 
 export const register: Register = on => {
-  // Running total kept in module memory: /clear moves the process to a new session id with fresh state.
+  // Running total for drawing; /clear wipes state and module memory, so it rides over in the store.
   let running: Record<string, Tokens> = {}
+
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear') await $.store.set(CARRY, { at: await $.clock.now(), running })
+
+    return next(e)
+  })
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'usage-pane', description: 'Open the usage pane' })
@@ -183,6 +193,9 @@ export const register: Register = on => {
   // After /clear the new session's state starts empty: restore the running total and shared figures.
   on('classic.SessionStart', async ($, e, next) => {
     if (e.source === 'clear') {
+      const carry = (await $.store.get(CARRY)) as { at: number; running: Record<string, Tokens> } | undefined
+      if (carry && (await $.clock.now()) - carry.at < CARRY_MS) running = carry.running
+      await $.store.delete(CARRY)
       const total = running
       await update($, tokens, () => total)
       await update($, current, () => ({}))
