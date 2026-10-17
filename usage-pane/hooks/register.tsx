@@ -96,6 +96,11 @@ export function sumTokens(all: Record<string, Tokens>): Tokens {
 
 const whole = (t: Tokens) => t.input + t.output + t.cacheRead + t.cacheWrite
 
+// Price-weighted tokens in input-token equivalents: cache read 0.1x, 1-hour cache write 2x, output 5x.
+export function realCost(t: Tokens): number {
+  return t.input + t.cacheRead * 0.1 + t.cacheWrite * 2 + t.output * 5
+}
+
 // Tokens that count toward the estimates; cache reads are left out as they weigh far less.
 export function counted(t: Tokens): number {
   return t.input + t.output + t.cacheWrite
@@ -129,16 +134,16 @@ export function tokensLeft(w: Window | undefined, pct: number): number | null {
 
 const LABELS: Record<string, string> = { five_hour: 'Session (5h)', seven_day: 'Weekly' }
 
-// One line of real usage for the model: context fill, plan limits, session running total.
+// One line of real usage for the model: context fill, plan limits, session real cost.
 export function usageNote(
   ctx: { tokens?: number; window: number; percent?: number },
   r: Reading | null,
-  total: number,
+  cost: number,
 ): string | null {
   const parts: string[] = []
   if (ctx.tokens !== undefined) parts.push(`context ${fmt(ctx.tokens)} of ${fmt(ctx.window)} (${ctx.percent ?? Math.round((ctx.tokens / ctx.window) * 100)}%)`)
   for (const l of r?.limits ?? []) parts.push(`${LABELS[l.kind] ?? l.kind} limit ${l.percentUsed}%`)
-  if (total > 0) parts.push(`session running total ${fmt(total)} tokens`)
+  if (cost > 0) parts.push(`session real cost ${fmt(cost)} tokens`)
   return parts.length ? `[usage-pane, measured] ${parts.join(' · ')}` : null
 }
 
@@ -199,7 +204,7 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     const usage = await $.session.usage()
     const r = await read($, reading)
-    const note = usageNote(usage.context, r, whole(sumTokens(running)))
+    const note = usageNote(usage.context, r, realCost(sumTokens(running)))
 
     return next(note ? { ...e, context: [...(e.context ?? []), note] } : e)
   })
@@ -303,6 +308,11 @@ export const register: Register = on => {
       <Box flexDirection="column">
         {r ? r.limits.map(limitRow) : <Text dimColor>No limit reading yet. It fills after the next Claude reply.</Text>}
         {r && <Text dimColor>updated {span(t - r.at)} ago</Text>}
+
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold>Real cost  {fmt(realCost(sum))} tokens · current {fmt(realCost(cur))}</Text>
+          <Text dimColor>input-token equivalents: cache read 0.1x, cache write 2x, output 5x</Text>
+        </Box>
 
         <Box flexDirection="column" marginTop={1}>
           <Text bold>Running total  {fmt(all)} tokens</Text>
